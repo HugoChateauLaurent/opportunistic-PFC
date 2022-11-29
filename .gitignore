@@ -1,0 +1,32 @@
+# Project
+logs/
+old_logs/
+jobs/
+plafrim_jobs/
+old_notebooks/
+opportunistic_pfc/plafrim_launcher.py
+plafrim_utils.py
+check_finished.py
+tmp.py
+to_plafrim.sh
+from_plafrim.sh
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# poetry
+#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
+#   This is especially recommended for binary packages to ensure reproducibility, and is more
+#   commonly ignored for libraries.
+#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
+poetry.lock
+pyproject.toml
