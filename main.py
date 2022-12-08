@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 
 import opportunistic_pfc as opfc
-from opportunistic_pfc.experiments import RandomParametersExperiment
-from opportunistic_pfc.analyses import Analysis
+from opportunistic_pfc.experiments import *
+from opportunistic_pfc.analyses import *
 
 from pathlib import Path
 import os

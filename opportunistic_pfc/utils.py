@@ -97,6 +97,7 @@ def evaluate_performance_choice(prediction, truth, loss_fn, rng, xp=None):
         correct = 0
     else:
         correct = rng.integers(2)
+        print("random",correct)
 
     if xp is not None:
         perseverative = -1 if correct else xp.check_perseverative(truth[:,2*24:3*24])

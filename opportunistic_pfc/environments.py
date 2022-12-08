@@ -61,9 +61,6 @@ class NavawongseEnvironment(Environment):
         return self.lists['A'].shape[1]
 
 
-
-
-
 class PetersEnvironment(Environment):
 
     def create_lists(self):

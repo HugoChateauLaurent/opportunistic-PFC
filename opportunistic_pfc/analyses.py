@@ -62,12 +62,6 @@ class AbstractAnalysis(object):
 
                 for k in list(data.keys()):
 
-                    # data[k] = np.array(data[k])
-
-                    # Should be removed for new simulations with bug fixed
-                    if 'test' in k and params['n_hebb']==0:
-                        data[k] = data[k.replace('test','training')]
-
                     if 'corrects' in k:
                         # print(data[k].shape)
                         data['_'.join(['mean',k])] = np.mean(data[k][:100]) if len(data[k])>0 else None
@@ -104,294 +98,307 @@ class AbstractAnalysis(object):
 
 
 
+class DebugAnalysis(AbstractAnalysis):
+    def analyse(self):
+        for n_hebb in [0]:#1,0]:
+            for seed in range(50,55):
+                plot_df = self.results[(self.results['n_hebb']==n_hebb) & (self.results['seed']==seed)]
+                print(plot_df.columns)
+                print(n_hebb, seed)
+                results = plot_df.iloc[0].test_corrects.mean(axis=1)
+                plt.plot(results)
+                plt.show()
+
 class Analysis(AbstractAnalysis):
     def analyse(self):
-        for n_hebb in [1,0]:
+        for msp in [False, True]:
+            for n_hebb in [1,0]:
 
-            ##############################
-            # n_targets plot
-            ##############################
 
-            plot_df = self.results[(self.results['n_hebb']==n_hebb) & (self.results['mechanisms']==6)]
-            plot_df["n_targets"] = plot_df["n_targets"].astype(int).astype(str)
-            order = [str(i) for i in range(1,int(plot_df["n_targets"].max()) + 1)]
-            x='n_targets'
-            y='mean_test_corrects'
-            plt.figure(figsize=(3,3))
-            flierprops = dict(marker='o', markersize=2)
-            ax = sns.boxplot(
-                data=plot_df,
-                x=x,
-                y=y,
-                showfliers=True,
-                order=order,
-                flierprops=flierprops)
-            xlim = ax.get_xlim()
-            plt.plot([-10,10], [50 for i in range(2)], linestyle='--', color='k', alpha=.2, zorder=-1)
-            ax.set_xlim(xlim)
+                ##############################
+                # contribution plot
+                ##############################
+                # control_perf = {l:[] for l in constants.MODULAR_LAYERS}
+                # targeted_perf = {l:[] for l in constants.MODULAR_LAYERS}
+                contribution = []
+                for i,layer in enumerate(constants.MODULAR_LAYERS):
+                    for n_targets in range(1,len(constants.MODULAR_LAYERS)):
+                        for _,control in self.results[(self.results['n_hebb']==n_hebb) & (self.results['msp']==msp) & (self.results['mechanisms']==6) & (self.results['n_targets']==n_targets) & (self.results[layer]==0)].iterrows():
+                            targeted = self.results[(self.results['n_hebb']==n_hebb) & (self.results['msp']==msp) & (self.results['mechanisms']==6) & (self.results['n_targets']==n_targets+1) & (self.results[layer]==1)]
 
-            # Annotations for statistical significance
+                            # make sure we focus on the same parameters
+                            targeted = targeted[(targeted.seed==control.seed) & (targeted.N_scale==control.N_scale) & (targeted.lr==control.lr) & (targeted.kappa==control.kappa) & (targeted.lamb==control.lamb) & (targeted.eta==control.eta)]
 
-            spearman_df = plot_df
-            spearmanres = spearmanr(spearman_df['n_targets'].astype(str).astype(int), spearman_df[y], alternative="greater")
-            print("N:", len(spearman_df.index), "|", spearmanres)
+                            # make sure the same layers are also modulated
+                            for target in [t for t in constants.MODULAR_LAYERS if control[t]==1]:
+                                targeted = targeted[targeted[target]==1]
 
-            pairs = [("1","2"), ("2","5")]#[("0","1")]
-            if len(pairs)>0:
-                # print("0 better than chance:", wilcoxon(
-                #     plot_df[plot_df[x]=="0"][y].to_numpy()-50,
-                #     alternative="greater"
-                # ))
-                stattest = {
-                    p:mannwhitneyu(
+                            # control_perf[layer].append(control.mean_test_corrects)
+                            # targeted_perf[layer].append(targeted.mean_test_corrects)
+                            contribution.append({"Target":layer, "Control":float(control.mean_test_corrects), "Targeted":float(targeted.mean_test_corrects), "Contribution":float(targeted.mean_test_corrects-control.mean_test_corrects)})
+
+                #             plt.plot([i*2, i*2+1], [control.mean_test_corrects, targeted.mean_test_corrects], color="gray", alpha=.2)
+                # plt.show()
+                # plt.close()
+
+                contribution = pd.DataFrame(contribution)
+                print(contribution["Contribution"].mean())
+                flierprops = dict(marker='o', markersize=2)
+                ax = sns.boxplot(
+                    data=contribution,
+                    x="Target",
+                    y="Contribution",
+                    showfliers=False,
+                    order=constants.MODULAR_LAYERS,
+                    flierprops=flierprops,
+                    boxprops={"facecolor": (.4, .6, .8, .25)})
+                plt.show()
+
+
+
+                ##############################
+                # n_targets plot
+                ##############################
+
+                plot_df = self.results[(self.results['n_hebb']==n_hebb) & (self.results['msp']==msp) & ((self.results['mechanisms']==6) | (self.results['mechanisms']==-1))]
+                plot_df["n_targets"] = plot_df["n_targets"].astype(int).astype(str)
+                order = [str(i) for i in range(int(plot_df["n_targets"].max()) + 1)]
+                x='n_targets'
+                y='mean_test_corrects'
+                plt.figure(figsize=(3,3))
+                flierprops = dict(marker='o', markersize=2)
+                ax = sns.boxplot(
+                    data=plot_df,
+                    x=x,
+                    y=y,
+                    showfliers=True,
+                    order=order,
+                    flierprops=flierprops,
+                    boxprops={"facecolor": (.4, .6, .8, .25)})
+                xlim = ax.get_xlim()
+                plt.plot([-10,10], [50 for i in range(2)], linestyle='--', color='k', alpha=.2, zorder=-1)
+                ax.set_xlim(xlim)
+                ax.set_ylim(48,102)
+
+                # Annotations for statistical significance
+
+                spearman_df = plot_df
+                spearmanres = spearmanr(spearman_df['n_targets'].astype(str).astype(int), spearman_df[y], alternative="greater")
+                print("N:", len(spearman_df.index), "|", spearmanres)
+
+                pairs = [("1","2"), ("2","5")]#[("0","1")]
+                if len(pairs)>0:
+                    # print("0 better than chance:", wilcoxon(
+                    #     plot_df[plot_df[x]=="0"][y].to_numpy()-50,
+                    #     alternative="greater"
+                    # ))
+                    stattest = {
+                        p:mannwhitneyu(
+                            plot_df[plot_df[x]==p[0]][y],
+                            plot_df[plot_df[x]==p[1]][y],
+                            alternative="less"
+                        ) for p in pairs}
+
+                    for p,v in stattest.items():
+                        for i in range(2):
+                            print(p[i], "N:", len(plot_df[plot_df[x]==p[i]][y].index), "Median:", plot_df[plot_df[x]==p[i]][y].median())
+                        print(v)
+                        print("\n\n")
+                    # annotator = Annotator(ax, pairs, data=plot_df, x=x, y=y, order=order)
+                    # annotator.configure(text_format="star", loc="inside")
+                    # annotator.set_pvalues_and_annotate([v.pvalue for v in stattest.values()])
+
+                ax.set_xlim(xlim)
+                ax.set_xlabel("Number of modulated layers")
+                ax.set_ylabel("Performance (% correct)")
+                ax.set_ylim(48,102)
+                fig = ax.get_figure()
+                fig.tight_layout()
+                utils.make_fig(fig, ax, self.figures_path, "ntargets"+"_nhebb_"+str(n_hebb)+"_msp_"+str(msp))
+
+                # # fig, ax = plt.subplots()
+                # plot_df = df[(df['n_hebb']==n_hebb) & (df['mechanisms']==6) & (df['n_targets']>0)]
+                # ax = sns.regplot(data=plot_df, x=x, y=y, x_estimator=np.mean)
+                #
+                # # corr_dfs = [df[(df['n_hebb']==n_hebb) & (df['mechanisms']==6) & (df['n_targets']>min) & (df['n_targets']<max)] for min,max in [(0,4), (2,6)]]
+                # # print(spearmanr(corr_dfs[0][x], corr_dfs[0][y], alternative='greater'))
+                # # print(spearmanr(corr_dfs[1][x], corr_dfs[1][y], alternative='less'))
+                # print(spearmanr(plot_df[x], plot_df[y], alternative='greater'))
+                #
+                # reg = LinearRegression().fit(plot_df[x].to_numpy()[:,None], plot_df[y])
+                # print(reg.score(plot_df[x].to_numpy()[:,None], plot_df[y]))
+                #
+                # mod = sm.OLS(plot_df[y], plot_df[x].to_numpy()[:,None])
+                # fii = mod.fit()
+                # print(fii.summary2())
+                # ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+                # ax.set_xlabel("Number of modulated layers")
+                # ax.set_ylabel("Performance (% correct)")
+                # fig = ax.get_figure()
+
+                # # Annotations for statistical significance
+                # plot_df = df[(df['n_hebb']==n_hebb) & ((df['mechanisms']==6) | (df['mechanisms']==-1))]
+                # plot_df["n_targets"] = plot_df["n_targets"].astype(int).astype(str)
+                # pairs = [("1","2"),("2","3"),("4","3"),("5","4"),("5","3")]
+                # p_values = {
+                #     p:mannwhitneyu(
+                #         plot_df[plot_df[x]==p[0]][y],
+                #         plot_df[plot_df[x]==p[1]][y],
+                #         alternative="less"
+                #     ).pvalue for p in pairs}
+                # annotator = Annotator(ax, pairs, data=plot_df, x=x, y=y, order=[str(i) for i in range(int(plot_df["n_targets"].max()) + 1)])
+                # annotator.configure(text_format="star", loc="inside")
+                # annotator.set_pvalues_and_annotate(list(p_values.values()))
+                # utils.make_fig(fig, ax, "fig/seaborn")
+
+                ##############################
+                # target_labels plot
+                ##############################
+
+
+                fig,ax = plt.subplots(nrows=1, ncols=2, figsize=(4,3), sharey=True, gridspec_kw={'width_ratios':[5,1]})
+                plot_df = self.results[((self.results['n_targets']<2) | (self.results['target_labels']==('CA1', 'ECout'))) & (self.results['n_hebb']==n_hebb) & (self.results['msp']==msp) & (self.results['mechanisms']==6)]
+                plot_df["target_labels"] = plot_df["target_labels"].astype(str)
+                order = ["('ECin',)", "('DG',)", "('CA3',)", "('CA1',)", "('ECout',)"]#, "('CA1', 'ECout')"]
+                x='target_labels'
+                y='mean_test_corrects'
+
+                sns.boxplot(
+                    data=plot_df[plot_df['n_targets']<2],
+                    ax=ax[0],
+                    x=x,
+                    y=y,
+                    showfliers = True,
+                    flierprops=flierprops,
+                    order=order,
+                    boxprops={"facecolor": (.4, .6, .8, .25)})
+
+
+                sns.boxplot(
+                    data=plot_df[(self.results['target_labels']==('CA1', 'ECout'))],
+                    ax=ax[1],
+                    x=x,
+                    y=y,
+                    flierprops=flierprops,
+                    showfliers = True,
+                    boxprops={"facecolor": (.4, .6, .8, .25)})
+
+                # Annotations for statistical significance
+                # pairs = list(combinations(order, 2))
+
+                spearman_df = plot_df[plot_df['n_targets']<2]
+                spearmanres = spearmanr([order.index(target) for target in spearman_df['target_labels']], spearman_df[y], alternative="greater")
+                print("N:", len(spearman_df.index), "|", spearmanres)
+
+                pairs = [("('ECin',)","('DG',)"), ("('ECin',)","('CA3',)"), ("('ECin',)","('CA1',)"), ("('ECin',)","('ECout',)"), ("('CA1',)","('ECout',)"), ("('CA1',)","('CA1', 'ECout')"), ("('ECout',)","('CA1', 'ECout')")]
+                stattest = {}
+                for p in pairs:
+                    alternative = "two-sided" if p==("('CA1',)","('ECout',)") else "less"
+                    print(p, alternative)
+                    stattest[p] = wilcoxon(
                         plot_df[plot_df[x]==p[0]][y],
                         plot_df[plot_df[x]==p[1]][y],
-                        alternative="less"
-                    ) for p in pairs}
-
+                        alternative=alternative,
+                        method='approx'
+                    )
                 for p,v in stattest.items():
                     for i in range(2):
                         print(p[i], "N:", len(plot_df[plot_df[x]==p[i]][y].index), "Median:", plot_df[plot_df[x]==p[i]][y].median())
-                    print(v)
+                    print("pvalue", v.pvalue)
+                    print("statistic", v.statistic)
+                    print("z statistic", v.zstatistic)
                     print("\n\n")
+                # # annotator = Annotator(ax, pairs, data=plot_df, x=x, y=y, order=order)
+                # # annotator.configure(text_format="star", loc="outside")
+                # # annotator.set_pvalues_and_annotate([v.pvalue for v in stattest.values()])
+
+
+                for i in range(2):
+                    xlim = ax[i].get_xlim()
+                    ax[i].plot([-10,10], [50 for i in range(2)], linestyle='--', color='k', alpha=.2, zorder=-1)
+                    ax[i].set_xlim(xlim)
+                    ax[i].set_xlabel("")
+                ax[1].set_ylabel("")
+                # ax[1].set_ylim(ax[0].get_ylim())
+                # add a big axis, hide frame
+                fig.add_subplot(111, frameon=False)
+                # hide tick and tick label of the big axis
+                plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
+                plt.xlabel("Modulated layers")
+                ax[0].set_ylabel("Performance (% correct)")
+                ax[0].set_xticklabels([t.get_text()[2:-3] for t in ax[0].get_xticklabels()])
+                ax[1].set_xticklabels(["CA1 & ECout"])
+                ax[0].set_ylim(48,102)
+                ax[1].set_ylim(48,102)
+                fig.tight_layout()
+                utils.make_fig(fig, ax, self.figures_path, "target_labels"+"_nhebb_"+str(n_hebb)+"_msp_"+str(msp))
+
+                ##############################
+                # All target_labels plot
+                ##############################
+
+                plot_df = self.results[(self.results['n_hebb']==n_hebb) & (self.results['msp']==msp) & (self.results['mechanisms']==6) &
+                    (
+                        (self.results['n_targets']>0)
+                    )
+                ]
+                plot_df["target_labels"] = plot_df["target_labels"].astype(str)
+                order = list(plot_df.groupby(by=["target_labels"])["mean_test_corrects"].quantile(.25).sort_values(ascending=False).index)
+                x='target_labels'
+                y='mean_test_corrects'
+
+                fig,ax = plt.subplots(nrows=2, ncols=1, figsize=(5,3.5), sharex=True, gridspec_kw={'height_ratios':[3,2]})
+
+                sns.boxplot(
+                    data=plot_df,
+                    x=x,
+                    y=y,
+                    ax=ax[0],
+                    showfliers = True,
+                    flierprops=flierprops,
+                    order=order,
+                    boxprops={"facecolor": (.4, .6, .8, .25)})
+                xlim = ax[0].get_xlim()
+                ax[0].plot([-10,10000], [50 for i in range(2)], linestyle='--', color='k', alpha=.2, zorder=-1)
+
+                for i,c in enumerate(order):
+                    for j,l in enumerate(constants.MODULAR_LAYERS[::-1]):
+                        if l in c:
+                            ax[1].plot([i], [j], marker="x", color='black')
+
+
+                # # Annotations for statistical significance
+                # # pairs = list(combinations(order, 2))
+                # p_values = {
+                #     p:mannwhitneyu(
+                #         plot_df[plot_df[x]==p[0]][y],
+                #         plot_df[plot_df[x]==p[1]][y],
+                #         alternative="less"
+                #     ).pvalue for p in pairs}
+                # print("pairs",pairs)
                 # annotator = Annotator(ax, pairs, data=plot_df, x=x, y=y, order=order)
                 # annotator.configure(text_format="star", loc="inside")
-                # annotator.set_pvalues_and_annotate([v.pvalue for v in stattest.values()])
+                # annotator.set_pvalues_and_annotate(list(p_values.values()))
 
-            ax.set_xlim(xlim)
-            ax.set_xlabel("Number of modulated layers")
-            ax.set_ylabel("Performance (% correct)")
-            fig = ax.get_figure()
-            fig.tight_layout()
-            utils.make_fig(fig, ax, self.figures_path, "ntargets"+"_nhebb_"+str(n_hebb))
-
-            # # fig, ax = plt.subplots()
-            # plot_df = df[(df['n_hebb']==n_hebb) & (df['mechanisms']==6) & (df['n_targets']>0)]
-            # ax = sns.regplot(data=plot_df, x=x, y=y, x_estimator=np.mean)
-            #
-            # # corr_dfs = [df[(df['n_hebb']==n_hebb) & (df['mechanisms']==6) & (df['n_targets']>min) & (df['n_targets']<max)] for min,max in [(0,4), (2,6)]]
-            # # print(spearmanr(corr_dfs[0][x], corr_dfs[0][y], alternative='greater'))
-            # # print(spearmanr(corr_dfs[1][x], corr_dfs[1][y], alternative='less'))
-            # print(spearmanr(plot_df[x], plot_df[y], alternative='greater'))
-            #
-            # reg = LinearRegression().fit(plot_df[x].to_numpy()[:,None], plot_df[y])
-            # print(reg.score(plot_df[x].to_numpy()[:,None], plot_df[y]))
-            #
-            # mod = sm.OLS(plot_df[y], plot_df[x].to_numpy()[:,None])
-            # fii = mod.fit()
-            # print(fii.summary2())
-            # ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-            # ax.set_xlabel("Number of modulated layers")
-            # ax.set_ylabel("Performance (% correct)")
-            # fig = ax.get_figure()
-
-            # # Annotations for statistical significance
-            # plot_df = df[(df['n_hebb']==n_hebb) & ((df['mechanisms']==6) | (df['mechanisms']==-1))]
-            # plot_df["n_targets"] = plot_df["n_targets"].astype(int).astype(str)
-            # pairs = [("1","2"),("2","3"),("4","3"),("5","4"),("5","3")]
-            # p_values = {
-            #     p:mannwhitneyu(
-            #         plot_df[plot_df[x]==p[0]][y],
-            #         plot_df[plot_df[x]==p[1]][y],
-            #         alternative="less"
-            #     ).pvalue for p in pairs}
-            # annotator = Annotator(ax, pairs, data=plot_df, x=x, y=y, order=[str(i) for i in range(int(plot_df["n_targets"].max()) + 1)])
-            # annotator.configure(text_format="star", loc="inside")
-            # annotator.set_pvalues_and_annotate(list(p_values.values()))
-            # utils.make_fig(fig, ax, "fig/seaborn")
-
-            ##############################
-            # target_labels plot
-            ##############################
-
-
-            fig,ax = plt.subplots(nrows=1, ncols=2, figsize=(4,3), sharey=True, gridspec_kw={'width_ratios':[5,1]})
-            plot_df = self.results[((self.results['n_targets']<2) | (self.results['target_labels']==('CA1', 'ECout'))) & (self.results['n_hebb']==n_hebb) & (self.results['mechanisms']==6)]
-            plot_df["target_labels"] = plot_df["target_labels"].astype(str)
-            order = ["('ECin',)", "('DG',)", "('CA3',)", "('CA1',)", "('ECout',)"]#, "('CA1', 'ECout')"]
-            x='target_labels'
-            y='mean_test_corrects'
-
-            sns.boxplot(
-                data=plot_df[plot_df['n_targets']<2],
-                ax=ax[0],
-                x=x,
-                y=y,
-                showfliers = True,
-                flierprops=flierprops,
-                order=order)
-
-
-            sns.boxplot(
-                data=plot_df[(self.results['target_labels']==('CA1', 'ECout'))],
-                ax=ax[1],
-                x=x,
-                y=y,
-                flierprops=flierprops,
-                showfliers = True)
-
-            # Annotations for statistical significance
-            # pairs = list(combinations(order, 2))
-
-            spearman_df = plot_df[plot_df['n_targets']<2]
-            spearmanres = spearmanr([order.index(target) for target in spearman_df['target_labels']], spearman_df[y], alternative="greater")
-            print("N:", len(spearman_df.index), "|", spearmanres)
-
-            pairs = [("('ECin',)","('DG',)"), ("('ECin',)","('CA3',)"), ("('ECin',)","('CA1',)"), ("('ECin',)","('ECout',)"), ("('CA1',)","('ECout',)"), ("('CA1',)","('CA1', 'ECout')"), ("('ECout',)","('CA1', 'ECout')")]
-            stattest = {}
-            for p in pairs:
-                alternative = "two-sided" if p==("('CA1',)","('ECout',)") else "less"
-                print(p, alternative)
-                stattest[p] = wilcoxon(
-                    plot_df[plot_df[x]==p[0]][y],
-                    plot_df[plot_df[x]==p[1]][y],
-                    alternative=alternative,
-                    method='approx'
-                )
-            for p,v in stattest.items():
-                for i in range(2):
-                    print(p[i], "N:", len(plot_df[plot_df[x]==p[i]][y].index), "Median:", plot_df[plot_df[x]==p[i]][y].median())
-                print("pvalue", v.pvalue)
-                print("statistic", v.statistic)
-                print("z statistic", v.zstatistic)
-                print("\n\n")
-            # # annotator = Annotator(ax, pairs, data=plot_df, x=x, y=y, order=order)
-            # # annotator.configure(text_format="star", loc="outside")
-            # # annotator.set_pvalues_and_annotate([v.pvalue for v in stattest.values()])
-
-
-            for i in range(2):
-                xlim = ax[i].get_xlim()
-                ax[i].plot([-10,10], [50 for i in range(2)], linestyle='--', color='k', alpha=.2, zorder=-1)
-                ax[i].set_xlim(xlim)
-                ax[i].set_xlabel("")
-            ax[1].set_ylabel("")
-            # ax[1].set_ylim(ax[0].get_ylim())
-            # add a big axis, hide frame
-            fig.add_subplot(111, frameon=False)
-            # hide tick and tick label of the big axis
-            plt.tick_params(labelcolor='none', which='both', top=False, bottom=False, left=False, right=False)
-            plt.xlabel("Modulated layers")
-            ax[0].set_ylabel("Performance (% correct)")
-            ax[0].set_xticklabels([t.get_text()[2:-3] for t in ax[0].get_xticklabels()])
-            ax[1].set_xticklabels(["CA1 & ECout"])
-            fig.tight_layout()
-            utils.make_fig(fig, ax, self.figures_path, "target_labels"+"_nhebb_"+str(n_hebb))
-
-
-            plot_df = self.results[(self.results['n_hebb']==n_hebb) & (self.results['mechanisms']==6) &
-                (
-                    ((self.results['n_targets']==2) & (self.results['CA1']==True) & (self.results['ECout']==True)) |
-                    ((self.results['n_targets']==1) & (self.results['CA1']==True)) |
-                    ((self.results['n_targets']==1) & (self.results['ECout']==True))
-                )
-            ]
-            plot_df["target_labels"] = plot_df["target_labels"].astype(str)
-            print(plot_df['target_labels'])
-            order = ["('CA1',)", "('ECout',)", "('CA1', 'ECout')"]
-            pairs = [
-                # ("('CA1',)", "('ECout',)"),
-                ("('CA1',)", "('CA1', 'ECout')"),
-                ("('ECout',)", "('CA1', 'ECout')")
-            ]
-            x='target_labels'
-            y='mean_test_corrects'
-            ax = sns.boxplot(
-                data=plot_df,
-                x=x,
-                y=y,
-                showfliers = True,
-                flierprops=flierprops,
-                order=order)
-            xlim = ax.get_xlim()
-            plt.plot([-10,10], [50 for i in range(2)], linestyle='--', color='k', alpha=.2, zorder=-1)
-
-            # Annotations for statistical significance
-            # pairs = list(combinations(order, 2))
-            stattest = {
-                p:mannwhitneyu(
-                    plot_df[plot_df[x]==p[0]][y],
-                    plot_df[plot_df[x]==p[1]][y],
-                    alternative="two-sided"
-                ) for p in pairs}
-            print("pairs",pairs)
-            # annotator = Annotator(ax, pairs, data=plot_df, x=x, y=y, order=order)
-            # annotator.configure(text_format="star", loc="inside")
-            # annotator.set_pvalues_and_annotate([v.pvalue for v in stattest.values()])
-
-            ax.set_xlim(xlim)
-            ax.set_xlabel("Contextual input location")
-            ax.set_ylabel("Performance (% correct)")
-            ax.set_xticks(range(3), ["CA1","ECout","CA1 & ECout"])
-            fig = ax.get_figure()
-            fig.tight_layout()
-            utils.make_fig(fig, ax, self.figures_path)
-
-            ##############################
-            # All target_labels plot
-            ##############################
-
-            plot_df = self.results[(self.results['n_hebb']==n_hebb) & (self.results['mechanisms']==6) &
-                (
-                    (self.results['n_targets']>0)
-                )
-            ]
-            plot_df["target_labels"] = plot_df["target_labels"].astype(str)
-            order = list(plot_df.groupby(by=["target_labels"])["mean_test_corrects"].quantile(.25).sort_values(ascending=False).index)
-            print(order)
-            x='target_labels'
-            y='mean_test_corrects'
-
-            fig,ax = plt.subplots(nrows=2, ncols=1, figsize=(5,3.5), sharex=True, gridspec_kw={'height_ratios':[3,2]})
-
-            sns.boxplot(
-                data=plot_df,
-                x=x,
-                y=y,
-                ax=ax[0],
-                showfliers = True,
-                flierprops=flierprops,
-                order=order)
-            xlim = ax[0].get_xlim()
-            ax[0].plot([-10,10000], [50 for i in range(2)], linestyle='--', color='k', alpha=.2, zorder=-1)
-
-            print(order)
-            for i,c in enumerate(order):
-                for j,l in enumerate(constants.MODULAR_LAYERS[::-1]):
-                    if l in c:
-                        ax[1].plot([i], [j], marker="x", color='black')
-
-
-            # # Annotations for statistical significance
-            # # pairs = list(combinations(order, 2))
-            # p_values = {
-            #     p:mannwhitneyu(
-            #         plot_df[plot_df[x]==p[0]][y],
-            #         plot_df[plot_df[x]==p[1]][y],
-            #         alternative="less"
-            #     ).pvalue for p in pairs}
-            # print("pairs",pairs)
-            # annotator = Annotator(ax, pairs, data=plot_df, x=x, y=y, order=order)
-            # annotator.configure(text_format="star", loc="inside")
-            # annotator.set_pvalues_and_annotate(list(p_values.values()))
-
-            ax[0].set_xlim(xlim)
-            ax[0].set_xlabel("")
-            ax[0].set_ylabel("Performance (% correct)")
-            ax[0].set_xticks([])
-            ax[1].set_yticks(range(len(constants.MODULAR_LAYERS)), constants.MODULAR_LAYERS[::-1], rotation=20)
-            ax[1].set_ylim(-1, len(constants.MODULAR_LAYERS)-.5)
-            ax[1].set_aspect('auto')
-            ax[1].set_xlabel("Combinations of modulated layers")
-            ax[1].spines.right.set_visible(False)
-            ax[1].spines.left.set_visible(False)
-            ax[1].spines.top.set_visible(False)
-            ax[1].spines.bottom.set_visible(False)
-            ax[1].xaxis.set_ticks_position('none')
-            ax[1].yaxis.set_ticks_position('none')
-            fig.tight_layout()
-            plt.subplots_adjust(hspace=.01)
-            utils.make_fig(fig, ax, self.figures_path, "alltargets"+"_nhebb_"+str(n_hebb))
+                ax[0].set_xlim(xlim)
+                ax[0].set_ylim(48,102)
+                ax[1].set_ylim(48,102)
+                ax[0].set_xlabel("")
+                ax[0].set_ylabel("Performance (% correct)")
+                ax[0].set_xticks([])
+                ax[1].set_yticks(range(len(constants.MODULAR_LAYERS)), constants.MODULAR_LAYERS[::-1], rotation=20)
+                ax[1].set_ylim(-1, len(constants.MODULAR_LAYERS)-.5)
+                ax[1].set_aspect('auto')
+                ax[1].set_xlabel("Combinations of modulated layers")
+                ax[1].spines.right.set_visible(False)
+                ax[1].spines.left.set_visible(False)
+                ax[1].spines.top.set_visible(False)
+                ax[1].spines.bottom.set_visible(False)
+                ax[1].xaxis.set_ticks_position('none')
+                ax[1].yaxis.set_ticks_position('none')
+                fig.tight_layout()
+                plt.subplots_adjust(hspace=.01)
+                utils.make_fig(fig, ax, self.figures_path, "alltargets"+"_nhebb_"+str(n_hebb)+"_msp_"+str(msp))
 
 
 
@@ -411,7 +418,6 @@ def analyse_splitters(xp_df, start_session=50, end_session=None, n_contexts=2, n
 
     for i,target_labels in enumerate(target_labels_list):
 
-        print(target_labels)
 
         tmp_df = xp_df[(xp_df['target_labels']==target_labels)]
         assert len(tmp_df.index)==1
@@ -419,8 +425,6 @@ def analyse_splitters(xp_df, start_session=50, end_session=None, n_contexts=2, n
         proportion_dict = {}
 
         for layer in constants.MODULAR_LAYERS:
-
-            print(layer)
 
             activity = tmp_df.iloc[0]['test_activity'][layer]
 
@@ -509,7 +513,6 @@ def remove_random(organized_activity, splitter_count, rng=None):
         for layer_k, layer_v in target_labels_v.items():
 
             n_neurons = int(layer_v.columns[-1][1:]) + 1
-            print(layer_k, n_neurons)
             to_remove = rng.choice(n_neurons, size=splitter_count[target_labels_k][layer_k], replace=False)
             org_act_without_random[target_labels_k][layer_k] = layer_v.drop(['#'+str(i) for i in to_remove], axis=1)
 

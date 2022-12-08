@@ -127,11 +127,12 @@ class Hebbian(Population):
 
 class DL(Module):
 
-    def __init__(self, N, n_contexts, modulations, hebbian=None):
+    def __init__(self, N, n_contexts, modulations, msp, hebbian=None):
 
         super().__init__()
 
         self.modulations = modulations
+        self.msp = msp
 
         print("N SI:", N["SI"])
 
@@ -139,7 +140,7 @@ class DL(Module):
             ["ECin",     Population(N["SI"], N["ECin"])],
             ["DG",       Population(N["ECin"], N["DG"])],
             ["CA3",      Population(N["DG"], N["CA3"])],
-            ["CA1",      Population(N["CA3"], N["CA1"])],
+            ["CA1",      Population(N["CA3"]+N["ECin"] if self.msp else N["CA3"], N["CA1"])],
             ["ECout",    Population(N["CA1"], N["ECout"])],
             ["SIout",    Population(N["ECout"], N["SI"], torch.sigmoid)],
         ])
@@ -177,19 +178,29 @@ class DL(Module):
                 if record_activity:
                     activity["hebbian"] = x.detach().clone().data[0]
 
+            elif label=="CA1" and self.msp: # Use a monosynaptic pathway (ECin -> CA1)
+                x = pop.forward(torch.cat([x, ECin], 1), context, muscimol)
+                if record_activity:
+                    activity[label] = x.detach().clone().data[0]
+
             else:
                 x = pop.forward(x, context, muscimol)
                 if record_activity:
                     activity[label] = x.detach().clone().data[0]
 
+            if label=="ECin" and self.msp:
+                ECin = x.clone()
+
+
         return x, activity
 
 class HPC(object):
 
-    def __init__(self, input_size, N_scale, n_contexts, n_hebb, kappa, lamb, eta, lr=.001, summary=True, modulations=None, rng=None):
+    def __init__(self, input_size, N_scale, msp, n_contexts, n_hebb, kappa, lamb, eta, lr=.001, summary=True, modulations=None, rng=None):
 
         self.N = utils.N_scale_to_N(N_scale)
         self.N["SI"] = input_size
+        self.msp = msp
 
         if modulations is None or modulations==0:
             modulations = []
@@ -222,7 +233,7 @@ class HPC(object):
             self.hebbian = Hebbian(self.kappa, self.lamb, self.eta, n_hebb, self.N["CA3"], self.N["CA3"]).to(self.device)
 
 
-        self.DLnet = DL(self.N, self.n_contexts, self.modulations, self.hebbian).to(self.device)
+        self.DLnet = DL(self.N, self.n_contexts, self.modulations, self.msp, self.hebbian).to(self.device)
         self.loss_fn = MSELoss(reduction='mean').to(self.device)
 
 
@@ -238,19 +249,10 @@ class HPC(object):
             torch.cuda.empty_cache()
 
         self.reset_optimizer()
-        training_ingredients = [] # Container for all the elements necessary for training initialization
 
         data = torch.from_numpy(data).float().to(self.device)
-        training_ingredients.append(data)
 
-        mask = torch.ones((data.shape[1])).to(self.device)
-        mask[24*2:24*3] *= 0 # mask target pattern
-        nomask = torch.ones((data.shape[1])).to(self.device)
-
-        training_ingredients.append(mask)
-        training_ingredients.append(nomask)
-
-        return tuple(training_ingredients)
+        return data
 
     def step(self, data, mask, muscimol, training=True, record_activity=False, shuffle_input_patterns=True):
 
@@ -266,10 +268,14 @@ class HPC(object):
             data[:,24:2*24] = tmp.detach().clone()
 
 
-        prediction, activity = self.DLnet((data*mask.unsqueeze(0).repeat((data.shape[0],1)))[:,:self.N["SI"]], data[:,self.N["SI"]:], self.hebbian, muscimol, record_activity)
+
+        input_data = data.detach().clone()
+        if mask:
+            input_data[:,24*2:24*3] *= 0
+
+        prediction, activity = self.DLnet(input_data[:,:self.N["SI"]], input_data[:,self.N["SI"]:], self.hebbian, muscimol, record_activity)
         loss = self.loss_fn(prediction, data[:,:self.N["SI"]])
         R_loss = self.loss_fn(prediction[:,24*2:self.N["SI"]], data[:,24*2:self.N["SI"]])
-
 
         if training:
             loss.backward()
@@ -294,13 +300,9 @@ class HPC(object):
         record_test_activity=False,
         record_last_only=False,
         max_sessions=np.inf,
-        training_as_test="non hebbian"
     ):
 
-        if training_as_test == "non hebbian":
-            training_as_test = self.hebbian is None
-
-        data, mask, nomask = self.train_init(data)
+        data = self.train_init(data)
         corrects = {"training":[], "test":[]}
         perseveratives = {"training":[], "test":[]}
         R_losses = {"training":[], "test":[]}
@@ -329,50 +331,43 @@ class HPC(object):
             if record_test_activity:
                 s_activity["test"] = {"Task":[]}
 
-            modes = []
-            if training:
-                modes.append("training")
-            if test and not training_as_test:
-                modes.append("test")
 
-            tasks = torch.clone(data)
-            shuf_order = list(range(len(tasks)))
-            self.rng.shuffle(shuf_order)
-            tasks = tasks[shuf_order]
 
-            for task in tasks:
-                task = task.unsqueeze(0)
-                for mode in modes:
+            for mode in ["training", "test"]:
+
+                tasks = torch.clone(data)
+                shuf_order = list(range(len(tasks)))
+                self.rng.shuffle(shuf_order)
+                tasks = tasks[shuf_order]
+
+                for i,task in enumerate(tasks):
+
+                    task = task.unsqueeze(0)
+
                     record_activity = (mode=="training" and record_training_activity) or (mode=="test" and record_test_activity)
-                    loss, R_loss, prediction, step_activity = self.step(task, mask if self.hebbian is None or mode=="test" else nomask, muscimol, mode=="training", record_activity)
+                    loss, R_loss, prediction, step_activity = self.step(task, self.hebbian is None or mode=="test", muscimol, mode=="training", record_activity)
+
 
                     correct, perseverative = utils.evaluate_performance(prediction, task, self.loss_fn, self.rng, env)
 
-                    for effective_mode in [mode] + (["test"] if mode=="train" and training_as_test else []):
-                        if record_activity:
-                            s_activity[effective_mode]['Task'].append(task.detach().cpu().numpy()[0])
+                    if record_activity:
+                        s_activity[mode]['Task'].append(task.detach().cpu().numpy()[0])
 
-                            for pop in step_activity.keys():
-                                if pop not in s_activity[effective_mode]:
-                                    s_activity[effective_mode][pop] = []
-                                s_activity[effective_mode][pop].append(step_activity[pop].detach().cpu().numpy())
+                        for pop in step_activity.keys():
+                            if pop not in s_activity[mode]:
+                                s_activity[mode][pop] = []
+                            s_activity[mode][pop].append(step_activity[pop].detach().cpu().numpy())
 
-                        s_corrects[effective_mode].append(correct)
-                        s_R_losses[effective_mode].append(R_loss.detach().cpu().numpy())
-                        s_losses[effective_mode].append(loss.detach().cpu().numpy())
-                        s_perseveratives[effective_mode].append(perseverative)
-
+                    s_corrects[mode].append(correct)
+                    s_R_losses[mode].append(R_loss.detach().cpu().numpy())
+                    s_losses[mode].append(loss.detach().cpu().numpy())
+                    s_perseveratives[mode].append(perseverative)
 
 
-            # if np.mean(s_corrects) >= criterion:
-            #     criterion_consec += 1
-            # else:
-            #     criterion_consec = 0
+                unshuf_order = np.zeros(len(tasks), dtype=int)
+                unshuf_order[shuf_order] = np.array(list(range(len(tasks))), dtype=int)
 
-            unshuf_order = np.zeros(len(tasks), dtype=int)
-            unshuf_order[shuf_order] = np.array(list(range(len(tasks))), dtype=int)
 
-            for mode in ['training','test']:
                 corrects[mode].append(np.array(s_corrects[mode])[unshuf_order] if len(s_corrects[mode])>0 else np.array(s_corrects[mode]))
                 R_losses[mode].append(np.array(s_R_losses[mode])[unshuf_order] if len(s_R_losses[mode])>0 else np.array(s_R_losses[mode]))
                 losses[mode].append(np.array(s_losses[mode])[unshuf_order] if len(s_losses[mode])>0 else np.array(s_losses[mode]))
@@ -385,7 +380,6 @@ class HPC(object):
                         activity[mode][pop].append(np.array(s_activity[mode][pop])[unshuf_order])
 
             s += 1
-
 
         return {
             "corrects": {k:np.array(v) for k,v in corrects.items()},

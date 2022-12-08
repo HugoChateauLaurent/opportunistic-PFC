@@ -38,10 +38,12 @@ class AbstractExperiment(object):
         self.add_parameter('muscimols', [0,1], comment='Doses of muscimol (0 or 1)')
         self.add_parameter('n_test_sessions', 1, comment='Number of test sessions')
         self.add_parameter('N_scale', 1e-3, comment='Scaling factor for the number of neurons')
+        self.add_parameter('msp', False, comment='Whether to use a monosynaptic pathway (i.e. ECin-to-CA1 connection)')
         self.add_parameter('n_hebb', 1, comment='Number of iterations of hebbian recall')
         self.add_parameter('kappa', .5, comment='Hebbian retrieval decay term')
         self.add_parameter('lamb', .5, comment='Hebbian rate of forgetting')
         self.add_parameter('eta', .5, comment='Hebbian rate of remembering')
+        self.add_parameter('env', lambda rng: environments.NavawongseEnvironment(n_contexts=2, rng=rng))
 
     def set_args_parameters(self, args):
         self.add_parameter('args', args, comment='Keep track of all arguments that were passed for reproducibility purposes')
@@ -98,7 +100,8 @@ class AbstractExperiment(object):
 
         sim_params["rng"] = np.random.default_rng(sim_params["seed"])
         sim_params["xp_cls"] = self.__class__
-        sim_params["env"] = environments.NavawongseEnvironment(n_contexts=2, rng=sim_params["rng"])
+        if callable(sim_params["env"]):
+            sim_params["env"] = sim_params["env"](sim_params["rng"])
 
         path = 'logs/'+self.name+'/simulations/sim_'+'{0:07d}'.format(sim_id)+'_' + utils.formatted_time()
         os.makedirs(path)
@@ -117,6 +120,7 @@ class AbstractExperiment(object):
         HPC = model.HPC(
             input_size=sim_params["env"].input_size,
             N_scale=sim_params["N_scale"],
+            msp=sim_params["msp"],
             n_contexts=sim_params["env"].n_contexts,
             n_hebb=sim_params["n_hebb"],
             kappa=sim_params["kappa"],
@@ -151,9 +155,20 @@ class DefaultExperiment(AbstractExperiment):
     def setup_exploration(self):
         pass
 
-class RandomParametersExperiment(AbstractExperiment):
+class DebugExperiment(AbstractExperiment):
     def __init__(self, args):
-        super(RandomParametersExperiment, self).__init__(args)
+        super(DebugExperiment, self).__init__(args)
+    def setup_exploration(self):
+        # self.params["env"].default_value = lambda rng: environments.NavawongseEnvironment(n_contexts=2, n_tasks=100, rng=rng)
+        # self.params["N_scale"].default_value = .001
+        for m in [None]:
+            for n_hebb in [0]:#,1]:
+                for seed in range(50,55):
+                    self.params["modulations"].exploration_values.append(m)
+                    self.params["n_hebb"].exploration_values.append(n_hebb)
+                    self.params["seed"].exploration_values.append(seed)
+
+class RandomParametersExperiment(AbstractExperiment):
     def setup_exploration(self):
         rng = np.random.default_rng(42) # rng for generating reproducible series of random seeds and parameters
         target_labels = ["ECin", "DG", "CA3", "CA1", "ECout"]
@@ -164,20 +179,27 @@ class RandomParametersExperiment(AbstractExperiment):
 
 
 
-        for i in range(100):#250):
+        for i in range(250):#250):
             s = int(rng.integers(99999999))
             ns = rng.uniform(1e-3, 5e-3)
             lr = 10**(rng.uniform(-5.5, -3))
             k = 1-1*10**(rng.uniform(-3, 0))
             l = 1-1*10**(rng.uniform(-6, 0))
             e = rng.uniform()
-            for nh in [0,1]:
-                for m in modulation_combinations:
-                    self.params["seed"].exploration_values.append(s)
-                    self.params["N_scale"].exploration_values.append(ns)
-                    self.params["n_hebb"].exploration_values.append(nh)
-                    self.params["lr"].exploration_values.append(lr)
-                    self.params["kappa"].exploration_values.append(k)
-                    self.params["lamb"].exploration_values.append(l)
-                    self.params["eta"].exploration_values.append(e)
-                    self.params["modulations"].exploration_values.append(m)
+            for msp in [False,True]:
+                for nh in [0,1]:#[0,1]:
+                    for m in modulation_combinations:
+                        self.params["msp"].exploration_values.append(msp)
+                        self.params["seed"].exploration_values.append(s)
+                        self.params["N_scale"].exploration_values.append(ns)
+                        self.params["n_hebb"].exploration_values.append(nh)
+                        self.params["lr"].exploration_values.append(lr)
+                        self.params["kappa"].exploration_values.append(k)
+                        self.params["lamb"].exploration_values.append(l)
+                        self.params["eta"].exploration_values.append(e)
+                        self.params["modulations"].exploration_values.append(m)
+
+class MSPRandomParametersExperiment(RandomParametersExperiment):
+    def setup_exploration(self):
+        self.params["msp"].default_value = True
+        super().setup_exploration()
